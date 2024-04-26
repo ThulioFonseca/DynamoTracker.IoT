@@ -41,7 +41,6 @@ void fileSystemInit()
     return;
   }
   Serial.println("LittleFS mounted successfully");
-  Serial.println();
 
   File secrets = LittleFS.open("/secrets.json", "r");
 
@@ -149,8 +148,7 @@ void SpinProgress(int counter, String term)
   const char *progressChars = "|/-\\";
   Serial.print(progressChars[counter % 4] + term);
   delay(100);
-  Serial.print("\r                                                   \r"); 
-  //Serial.print("\r\x1B[1C\b");
+  Serial.print("\r                                                   \r");
 }
 void ConnectToWiFi()
 {
@@ -211,10 +209,20 @@ JsonDocument CreateJson()
 void setup()
 {
   Serial.begin(115200);
+
+  Serial.println();
+  Serial.println("====== Dynamo Tracker Device ======");
+
+  Serial.println("-> Starting Device...");
   neoGps.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
 
+  Serial.println("-> Starting file system...");
   fileSystemInit();
+
+  Serial.println("-> Starting Network...");
   ConnectToWiFi();
+
+  Serial.println("-> Starting main routine...");
 }
 void loop()
 {
@@ -222,7 +230,7 @@ void loop()
   boolean newData = false;
   int count = 0;
 
-  // Get GPS data routine 
+  // Get GPS data routine
   while (millis() - startTime < 1000)
   {
     while (neoGps.available())
