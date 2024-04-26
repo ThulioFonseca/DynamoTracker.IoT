@@ -78,7 +78,7 @@ void getJwtToken()
   httpClient.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
   String payload = "grant_type=client_credentials&client_id=" + String(azureAuthClientId) +
-                   "&client_secret=" + String(azureAuthClientSecret) + "&azureAuthResource=" + String(azureAuthResource);
+                   "&client_secret=" + String(azureAuthClientSecret) + "&resource=" + String(azureAuthResource);
 
   int httpResponseCode = httpClient.POST(payload);
 
