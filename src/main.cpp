@@ -10,24 +10,24 @@
 #include <esp_cpu.h>
 #include <esp_system.h>
 
-#define RXD2 16
-#define TXD2 17
+#define RX_PIN 16
+#define TX_PIN 17
 
-HardwareSerial neogps(1);
+HardwareSerial neoGps(1);
 TinyGPSPlus gps;
-WiFiClient client;
-HTTPClient http;
+WiFiClient wifiClient;
+HTTPClient httpClient;
 
 String networkSsid;
 String networkPassword;
 
-// Dados de autenticação do Azure Service Bus
-String clientId;
-String clientSecret;
-String resource;
-String uri;
+// Azure Authentication Credentials
+String azureAuthClientId;
+String azureAuthClientSecret;
+String azureAuthResource;
+String azureAuthUri;
 
-// URL do endpoint do Azure Service Bus
+// Azure Service Bus URL
 String serviceBusUrl;
 
 String jwtToken;
@@ -37,17 +37,17 @@ void fileSystemInit()
 {
   if (!LittleFS.begin())
   {
-    Serial.println("Falha ao inicializar o sistema de arquivos LittleFS");
+    Serial.println("Fail to mount LittleFS");
     return;
   }
-  Serial.println("Sistema de arquivos LittleFS inicializado");
+  Serial.println("LittleFS mounted successfully");
   Serial.println();
 
   File secrets = LittleFS.open("/secrets.json", "r");
 
   if (secrets)
   {
-    Serial.println("Arquivo de secrets encontrado");
+    Serial.println("Secrets loaded successfully");
 
     size_t size = secrets.size();
     std::unique_ptr<char[]> buf(new char[size]);
@@ -56,10 +56,10 @@ void fileSystemInit()
     JsonDocument doc;
     deserializeJson(doc, buf.get());
 
-    clientId = doc["Authentication"]["ClientId"].as<String>();
-    clientSecret = doc["Authentication"]["ClientSecret"].as<String>();
-    resource = doc["Authentication"]["Resource"].as<String>();
-    uri = doc["Authentication"]["Uri"].as<String>();
+    azureAuthClientId = doc["Authentication"]["ClientId"].as<String>();
+    azureAuthClientSecret = doc["Authentication"]["ClientSecret"].as<String>();
+    azureAuthResource = doc["Authentication"]["Resource"].as<String>();
+    azureAuthUri = doc["Authentication"]["Uri"].as<String>();
 
     serviceBusUrl = doc["ServiceBus"]["ConnectionString"].as<String>();
 
@@ -70,91 +70,87 @@ void fileSystemInit()
   }
   else
   {
-    Serial.println("Arquivo de secrets não encontrado");
+    Serial.println("Secrets not found");
   }
 }
 void getJwtToken()
 {
-  http.begin(uri);
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  httpClient.begin(azureAuthUri);
+  httpClient.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  String payload = "grant_type=client_credentials&client_id=" + String(clientId) +
-                   "&client_secret=" + String(clientSecret) + "&resource=" + String(resource);
+  String payload = "grant_type=client_credentials&client_id=" + String(azureAuthClientId) +
+                   "&client_secret=" + String(azureAuthClientSecret) + "&azureAuthResource=" + String(azureAuthResource);
 
-  int httpResponseCode = http.POST(payload);
+  int httpResponseCode = httpClient.POST(payload);
 
   if (httpResponseCode >= 200)
   {
-    String response = http.getString();
+    String response = httpClient.getString();
     JsonDocument doc;
     deserializeJson(doc, response);
 
     jwtToken = doc["access_token"].as<String>();
 
-    Serial.println("Token obtido: " + jwtToken);
+    Serial.println("Token generated: " + jwtToken);
     Serial.println();
 
-    // Atualiza o tempo de expiração do token
+    // Update token expiration time
     unsigned long expiresIn = doc["expires_in"].as<unsigned long>();
     tokenExpirationTime = millis() + expiresIn * 1000; // Converte para milissegundos
   }
   else
   {
-    Serial.println("Erro ao obter token: " + String(httpResponseCode));
-    Serial.println(http.getString());
+    Serial.println("Failed to get JWT token: " + String(httpResponseCode));
+    Serial.println(httpClient.getString());
     Serial.println();
   }
 
-  http.end();
+  httpClient.end();
 }
 void sendToAzureServiceBus(JsonDocument &json)
 {
-  // Verifica se o token está expirado ou prestes a expirar em breve
+  // Verify if token has expired or is about to expire
   if (millis() >= tokenExpirationTime - 60000 || millis() >= tokenExpirationTime)
   {
-    Serial.println("Obtendo novo token...");
-    getJwtToken(); // Renova o token 1 minuto antes da expiração
+    Serial.println("Getting new token...");
+    getJwtToken();
   }
 
-  // Serializa o JSON
-  String jsonString;
-  serializeJson(json, jsonString);
+  String message;
+  serializeJson(json, message);
 
-  // Inicia a conexão com o endpoint do Azure Service Bus
-  http.begin(serviceBusUrl);
-  http.addHeader("Authorization", "Bearer " + jwtToken);
+  // Start connection to Azure Service Bus
+  httpClient.begin(serviceBusUrl);
+  httpClient.addHeader("Authorization", "Bearer " + jwtToken);
+  httpClient.addHeader("Content-Type", "application/json");
 
-  // Constrói o corpo da mensagem JSON
-  Serial.print("Mensagem JSON: ");
-  Serial.println(jsonString);
-
-  // Envia a requisição HTTP manualmente
-  Serial.println("Enviando requisição HTTP...");
-  int httpResponseCode = http.POST(jsonString);
+  Serial.print("Sending message: ");
+  Serial.println(message);
+  int httpResponseCode = httpClient.POST(message);
 
   if (httpResponseCode >= 200)
   {
-    // Verifica a resposta do servidor
-    Serial.print("Resposta do Servidor: ");
-    Serial.println(httpResponseCode);
-    String response = http.getString();
-    Serial.println(response);
+    Serial.print("Server response: ");
   }
   else
   {
-    Serial.print("Erro ao enviar requisição HTTP: ");
-    Serial.println(httpResponseCode);
-    String response = http.getString();
+    Serial.print("Error sending message: ");
   }
 
-  http.end();
+  Serial.print(httpResponseCode);
+  String response = httpClient.getString();
+  Serial.println(response);
+  Serial.println();
+
+  httpClient.end();
 }
 void SpinProgress(int counter, String term)
 {
   const char *progressChars = "|/-\\";
   Serial.print(progressChars[counter % 4] + term);
   delay(100);
-  Serial.print("\r\x1B[1C\b");
+  Serial.print("\r                                                   \r"); 
+  //Serial.print("\r\x1B[1C\b");
 }
 void ConnectToWiFi()
 {
@@ -177,7 +173,7 @@ String gpsFormatedDateTimeWithTimeZone()
 }
 JsonDocument CreateJson()
 {
-  // Informações do Hardware
+  // Hardware Information
   esp_chip_info_t chipInfo;
   esp_chip_info(&chipInfo);
   esp_chip_model_t chipModel = chipInfo.model;
@@ -215,7 +211,7 @@ JsonDocument CreateJson()
 void setup()
 {
   Serial.begin(115200);
-  neogps.begin(9600, SERIAL_8N1, RXD2, TXD2);
+  neoGps.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
 
   fileSystemInit();
   ConnectToWiFi();
@@ -226,12 +222,12 @@ void loop()
   boolean newData = false;
   int count = 0;
 
-  // Verifica continuamente se há novos dados por 1 segundo
+  // Get GPS data routine 
   while (millis() - startTime < 1000)
   {
-    while (neogps.available())
+    while (neoGps.available())
     {
-      if (gps.encode(neogps.read()))
+      if (gps.encode(neoGps.read()))
       {
         newData = true;
         break;
